@@ -63,7 +63,6 @@ function authError(err){
 $('customerForm').addEventListener('submit',async e=>{
  e.preventDefault(); if(!currentUser){alert('جارٍ تجهيز الدخول التلقائي؛ انتظر قليلًا ثم حاول مرة أخرى.');return;}
  const d=formData();
- if(!d.name||!d.phone||!d.type||!d.width||!d.height){alert('يرجى تعبئة الاسم والجوال ونوع الستارة والعرض والطول.');return;}
  const now=Date.now(); $('saveBtn').disabled=true;
  try {
   if(editingId){const old=records.find(r=>r.id===editingId); if(!old)throw new Error('لم يتم العثور على السجل.'); await update(ref(db,`customers/${editingId}`),{...d,updatedAt:now,updatedBy:currentUser.uid});}
