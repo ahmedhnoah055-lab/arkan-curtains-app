@@ -1,106 +1,23 @@
-// ستائر أركان الطليعة — Firebase Realtime Database + Firebase Authentication
+// ستائر أركان الطليعة — ملفات زبائن وغرف وشبابيك متعددة في Firebase
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-app.js';
 import { getAuth, onAuthStateChanged, signInAnonymously } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-auth.js';
 import { getDatabase, ref, push, set, update, remove, onValue } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-database.js';
-
-const firebaseConfig = {
-  apiKey: 'AIzaSyApAdiUqAAV6cblR3xLXIRmJmke_4yeu9A',
-  authDomain: 'arkan-curtains.firebaseapp.com',
-  databaseURL: 'https://arkan-curtains-default-rtdb.firebaseio.com',
-  projectId: 'arkan-curtains',
-  storageBucket: 'arkan-curtains.firebasestorage.app',
-  messagingSenderId: '982809563781',
-  appId: '1:982809563781:web:504a5013bf7b9a9e2b4fec',
-  measurementId: 'G-41MNY4N2B6'
-};
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getDatabase(app);
-const $ = id => document.getElementById(id);
-const fields = ['name','phone','room','type','width','height','notes'];
-let records = [], selectedId = null, editingId = null, unsubscribeRecords = null, currentUser = null;
-const clean = v => String(v ?? '').trim();
-function showStatus(msg){ $('setupStatus').textContent = msg; }
-function setAppEnabled(enabled){
-  document.querySelectorAll('#customerForm input,#customerForm select,#customerForm textarea,#customerForm button,#search,#refreshBtn').forEach(el=>el.disabled=!enabled);
-  if ($('logoutBtn')) $('logoutBtn').classList.add('hidden');
-}
-function formData(){return Object.fromEntries(fields.map(k=>[k,clean($(k).value)]));}
-function fillForm(r={}){fields.forEach(k=>$(k).value=r[k]||'');$('formTitle').textContent=r.id?'تعديل بيانات الزبون':'إضافة زبون جديد';$('saveBtn').textContent=r.id?'حفظ التعديلات':'حفظ بيانات الزبون';}
+const firebaseConfig={apiKey:'AIzaSyApAdiUqAAV6cblR3xLXIRmJmke_4yeu9A',authDomain:'arkan-curtains.firebaseapp.com',databaseURL:'https://arkan-curtains-default-rtdb.firebaseio.com',projectId:'arkan-curtains',storageBucket:'arkan-curtains.firebasestorage.app',messagingSenderId:'982809563781',appId:'1:982809563781:web:504a5013bf7b9a9e2b4fec',measurementId:'G-41MNY4N2B6'};
+const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getDatabase(app),$=id=>document.getElementById(id);
+let records=[],selectedId=null,editingId=null,currentUser=null,unsubscribeRecords=null,roomCounter=0,windowCounter=0,starting=false;
+const clean=v=>String(v??'').trim();
+function status(s){$('setupStatus').textContent=s;}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function render(){
- const q=clean($('search').value).toLocaleLowerCase();
- const filtered=records.filter(r=>[r.name,r.phone,r.room,r.type].some(v=>clean(v).toLocaleLowerCase().includes(q)));
- $('count').textContent=`عدد السجلات: ${records.length} — نتائج البحث: ${filtered.length}`;
- $('customerList').innerHTML=filtered.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)).map(r=>`<div class="customer"><div><b>${esc(r.name)}</b><div class="muted">${esc(r.phone)}${r.room?' • '+esc(r.room):''}</div></div><button class="secondary" data-open="${esc(r.id)}">عرض البيانات</button></div>`).join('')||'<p class="muted">لا توجد سجلات مطابقة.</p>';
- $('customerList').querySelectorAll('[data-open]').forEach(b=>b.addEventListener('click',()=>showDetails(b.dataset.open)));
-}
-function showDetails(id){
- const r=records.find(x=>x.id===id);if(!r)return;selectedId=id;
- const labels={name:'اسم الزبون',phone:'رقم الجوال',room:'اسم الغرفة',type:'نوع الستارة',width:'العرض (متر)',height:'الطول (متر)',notes:'ملاحظات'};
- $('details').innerHTML=fields.map(k=>`<div class="datum"><small>${labels[k]}</small><b>${esc(r[k]||'—')}</b></div>`).join('');
- $('detailCard').classList.remove('hidden');
-}
-// تسجيل دخول تلقائي بدون بريد أو كلمة مرور
-$('loginCard').classList.add('hidden');
-$('logoutBtn').classList.add('hidden');
-function authError(err){
- const code=err?.code||'';
- const messages={
-  'auth/invalid-credential':'البريد الإلكتروني أو كلمة المرور غير صحيحة.',
-  'auth/invalid-email':'صيغة البريد الإلكتروني غير صحيحة.',
-  'auth/user-not-found':'لا يوجد حساب بهذا البريد. أنشئ الحساب أولًا.',
-  'auth/wrong-password':'كلمة المرور غير صحيحة.',
-  'auth/email-already-in-use':'هذا البريد مسجل مسبقًا؛ استخدم تسجيل الدخول.',
-  'auth/weak-password':'كلمة المرور ضعيفة؛ استخدم 6 أحرف على الأقل.',
-  'auth/network-request-failed':'تعذر الاتصال بالإنترنت. تحقق من الشبكة.',
-  'auth/operation-not-allowed':'فعّل تسجيل الدخول المجهول من Firebase Authentication > طريقة تسجيل الدخول.',
-  'auth/admin-restricted-operation':'تأكد من تفعيل تسجيل الدخول المجهول في Firebase Authentication.',
-  'PERMISSION_DENIED':'رفضت قواعد قاعدة البيانات الوصول. راجع ملف FIREBASE_RULES.json والتعليمات.'
- };
- return messages[code]||`تعذر إكمال العملية (${code||'خطأ غير معروف'}). تحقق من إعدادات Firebase والإنترنت.`;
-}
-$('customerForm').addEventListener('submit',async e=>{
- e.preventDefault(); if(!currentUser){alert('جارٍ تجهيز الدخول التلقائي؛ انتظر قليلًا ثم حاول مرة أخرى.');return;}
- const d=formData();
- const now=Date.now(); $('saveBtn').disabled=true;
- try {
-  if(editingId){const old=records.find(r=>r.id===editingId); if(!old)throw new Error('لم يتم العثور على السجل.'); await update(ref(db,`customers/${editingId}`),{...d,updatedAt:now,updatedBy:currentUser.uid});}
-  else {const newRef=push(ref(db,'customers'));await set(newRef,{...d,createdAt:now,updatedAt:now,createdBy:currentUser.uid,updatedBy:currentUser.uid});}
-  editingId=null;fillForm();showStatus('متصل بالسحابة: تم حفظ بيانات الزبون، وستظهر التغييرات على أجهزة العمال المسجلين.');
- } catch(err){alert('لم يتم حفظ البيانات: '+authError(err));}
- finally {$('saveBtn').disabled=false;}
-});
-$('clearBtn').onclick=()=>{editingId=null;fillForm();};
-$('search').addEventListener('input',render);
-$('refreshBtn').onclick=()=>{if(!currentUser){alert('جارٍ تجهيز الدخول التلقائي؛ انتظر قليلًا ثم حاول مرة أخرى.');return;}showStatus('القائمة تتحدث تلقائيًا من قاعدة البيانات السحابية.');};
-$('closeDetails').onclick=()=>$('detailCard').classList.add('hidden');
-$('editBtn').onclick=()=>{const r=records.find(x=>x.id===selectedId);if(!r)return;editingId=r.id;fillForm(r);window.scrollTo({top:0,behavior:'smooth'});};
-$('deleteBtn').onclick=async()=>{if(!selectedId||!currentUser)return;if(!confirm('هل تريد حذف سجل هذا الزبون من قاعدة البيانات المشتركة لجميع العمال؟'))return;
- try{await remove(ref(db,`customers/${selectedId}`));$('detailCard').classList.add('hidden');selectedId=null;showStatus('تم حذف السجل من قاعدة البيانات المشتركة.');}
- catch(err){alert('تعذر حذف السجل: '+authError(err));}
-};
-let startingAnonymousSignIn=false;
-onAuthStateChanged(auth,async user=>{
- if(!user){
-  currentUser=null; setAppEnabled(false); $('loginCard').classList.add('hidden'); $('logoutBtn').classList.add('hidden');
-  if(unsubscribeRecords){unsubscribeRecords();unsubscribeRecords=null;}
-  records=[]; render();
-  if(!startingAnonymousSignIn){
-   startingAnonymousSignIn=true; showStatus('جارٍ الدخول التلقائي…');
-   try{await signInAnonymously(auth);}
-   catch(err){$('loginCard').classList.remove('hidden');showStatus('تعذر الدخول التلقائي: '+authError(err)+' تأكد من تفعيل «مجهول» في المصادقة.');}
-   finally{startingAnonymousSignIn=false;}
-  }
-  return;
- }
- currentUser=user; setAppEnabled(true); $('loginCard').classList.add('hidden'); $('logoutBtn').classList.add('hidden');
- $('accountInfo').textContent='الدخول التلقائي مفعّل — بيانات مشتركة';
- if(unsubscribeRecords){unsubscribeRecords();unsubscribeRecords=null;}
- showStatus('تم الدخول تلقائيًا. جارٍ الاتصال بقاعدة البيانات السحابية…');
- unsubscribeRecords=onValue(ref(db,'customers'),snapshot=>{
-  const value=snapshot.val()||{};
-  records=Object.entries(value).map(([id,r])=>({...r,id}));render();
-  showStatus('متصل بالسحابة. تتحدث قائمة الزبائن تلقائيًا على الأجهزة التي تفتح التطبيق.');
- },err=>{showStatus('تعذر قراءة قاعدة البيانات: '+authError(err)+' تأكد من قواعد الأمان في Firebase.');});
-});
+function newWindow(w={}){const id=++windowCounter,div=document.createElement('div');div.className='window-card';div.dataset.windowId=id;div.innerHTML=`<div class="window-head"><span class="room-title">الشباك</span><button type="button" class="danger small-btn remove-window">حذف الشباك</button></div><div class="grid" style="margin-top:10px"><div><label>نوع الستارة (اختياري)</label><select class="w-type"><option value="">اختر نوع الستارة</option><option>ويفي</option><option>رول</option><option>بلاك أوت</option><option>ستارة كهرباء</option><option>قماش</option><option>نوع آخر</option></select></div><div><label>العرض بالمتر (اختياري)</label><input class="w-width" inputmode="decimal" placeholder="مثال: 3.5"></div><div><label>الطول بالمتر (اختياري)</label><input class="w-height" inputmode="decimal" placeholder="مثال: 2.8"></div><div><label>ملاحظات الشباك (اختياري)</label><input class="w-notes" placeholder="ملاحظات"></div></div>`;
+div.querySelector('.w-type').value=w.type||'';div.querySelector('.w-width').value=w.width||'';div.querySelector('.w-height').value=w.height||'';div.querySelector('.w-notes').value=w.notes||'';div.querySelector('.remove-window').onclick=()=>div.remove();return div;}
+function newRoom(r={}){const id=++roomCounter,div=document.createElement('div');div.className='room-card';div.dataset.roomId=id;div.innerHTML=`<div class="room-head"><input class="r-name" placeholder="اكتب اسم الغرفة بأي اسم (مثال: مجلس، حمام، ملحق، مطبخ)"><button type="button" class="danger small-btn remove-room">حذف الغرفة</button></div><div class="windows"></div><div class="actions"><button type="button" class="secondary small-btn add-window">＋ إضافة شباك</button></div>`;div.querySelector('.r-name').value=r.name||'';const list=div.querySelector('.windows');(Array.isArray(r.windows)&&r.windows.length?r.windows:[{}]).forEach(w=>list.appendChild(newWindow(w)));div.querySelector('.add-window').onclick=()=>list.appendChild(newWindow());div.querySelector('.remove-room').onclick=()=>div.remove();return div;}
+function addRoom(r={}){$('roomsContainer').appendChild(newRoom(r));}
+function readRooms(){return [...$('roomsContainer').querySelectorAll('.room-card')].map(room=>({name:clean(room.querySelector('.r-name').value),windows:[...room.querySelectorAll('.window-card')].map(w=>({type:clean(w.querySelector('.w-type').value),width:clean(w.querySelector('.w-width').value),height:clean(w.querySelector('.w-height').value),notes:clean(w.querySelector('.w-notes').value)}))}));}
+function resetForm(){editingId=null;$('name').value='';$('phone').value='';$('notes').value='';$('roomsContainer').innerHTML='';addRoom();$('formTitle').textContent='إضافة ملف زبون';$('saveBtn').textContent='حفظ ملف الزبون';}
+function fillForm(r={}){$('name').value=r.name||'';$('phone').value=r.phone||'';$('notes').value=r.notes||'';$('roomsContainer').innerHTML='';let rooms=Array.isArray(r.rooms)?r.rooms:[];if(!rooms.length&&(r.room||r.type||r.width||r.height))rooms=[{name:r.room||'',windows:[{type:r.type||'',width:r.width||'',height:r.height||'',notes:r.notes||''}]}];(rooms.length?rooms:[{}]).forEach(addRoom);$('formTitle').textContent=r.id?'تعديل ملف الزبون':'إضافة ملف زبون';$('saveBtn').textContent=r.id?'حفظ التعديلات':'حفظ ملف الزبون';}
+function render(){const q=clean($('search').value).toLocaleLowerCase();const filtered=records.filter(r=>[r.name,r.phone,r.room,r.type,...(r.rooms||[]).map(x=>x.name)].some(v=>clean(v).toLocaleLowerCase().includes(q)));$('count').textContent=`عدد ملفات الزبائن: ${records.length} — نتائج البحث: ${filtered.length}`;$('customerList').innerHTML=filtered.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)).map(r=>{const n=(r.rooms||[]).length|| (r.room?1:0);const wc=(r.rooms||[]).reduce((sum,x)=>sum+(x.windows||[]).length,0)||((r.type||r.width||r.height)?1:0);return `<div class="customer"><div><b>${esc(r.name||'زبون بدون اسم')}</b><div class="muted">${esc(r.phone||'لا يوجد رقم جوال')} • ${n} غرفة • ${wc} شباك</div></div><button class="secondary" data-open="${esc(r.id)}">عرض الملف</button></div>`}).join('')||'<p class="muted">لا توجد ملفات مطابقة.</p>';$('customerList').querySelectorAll('[data-open]').forEach(b=>b.addEventListener('click',()=>showDetails(b.dataset.open)));}
+function showDetails(id){const r=records.find(x=>x.id===id);if(!r)return;selectedId=id;let rooms=Array.isArray(r.rooms)?r.rooms:[];if(!rooms.length&&(r.room||r.type||r.width||r.height))rooms=[{name:r.room||'غرفة',windows:[{type:r.type,width:r.width,height:r.height,notes:r.notes}]}];let html=`<div class="detailgrid"><div class="datum"><small>اسم الزبون</small><b>${esc(r.name||'—')}</b></div><div class="datum"><small>رقم الجوال</small><b>${esc(r.phone||'—')}</b></div><div class="datum"><small>ملاحظات عامة</small><b>${esc(r.notes||'—')}</b></div></div>`;html+=rooms.map((room,i)=>`<div class="room-card"><h3>${esc(room.name||`غرفة ${i+1}`)}</h3>${(room.windows||[]).map((w,j)=>`<div class="window-card"><b>الشباك ${j+1}</b><div class="detailgrid" style="margin-top:8px"><div class="datum"><small>نوع الستارة</small><b>${esc(w.type||'—')}</b></div><div class="datum"><small>العرض (متر)</small><b>${esc(w.width||'—')}</b></div><div class="datum"><small>الطول (متر)</small><b>${esc(w.height||'—')}</b></div><div class="datum"><small>ملاحظات</small><b>${esc(w.notes||'—')}</b></div></div></div>`).join('')||'<p class="muted">لا توجد شبابيك مضافة.</p>'}</div>`).join('');$('details').innerHTML=html;$('detailCard').classList.remove('hidden');}
+$('customerForm').addEventListener('submit',async e=>{e.preventDefault();if(!currentUser){alert('جارٍ الاتصال بالسحابة، انتظر قليلًا ثم حاول مرة أخرى.');return;}const d={name:clean($('name').value),phone:clean($('phone').value),notes:clean($('notes').value),rooms:readRooms()};const now=Date.now();$('saveBtn').disabled=true;try{if(editingId){const old=records.find(r=>r.id===editingId);if(!old)throw new Error('لم يتم العثور على ملف الزبون.');await update(ref(db,`customers/${editingId}`),{...d,updatedAt:now,updatedBy:currentUser.uid});}else{const nr=push(ref(db,'customers'));await set(nr,{...d,createdAt:now,updatedAt:now,createdBy:currentUser.uid,updatedBy:currentUser.uid});}resetForm();status('تم حفظ ملف الزبون في السحابة، وستظهر التغييرات على أجهزة العمال.');}catch(err){alert('لم يتم حفظ الملف: '+(err?.message||err));}finally{$('saveBtn').disabled=false;}});
+$('addRoomBtn').onclick=()=>addRoom();$('clearBtn').onclick=resetForm;$('search').addEventListener('input',render);$('refreshBtn').onclick=()=>status(currentUser?'القائمة تتحدث تلقائيًا من Firebase.':'جارٍ الاتصال بالسحابة.');$('closeDetails').onclick=()=>$('detailCard').classList.add('hidden');$('editBtn').onclick=()=>{const r=records.find(x=>x.id===selectedId);if(!r)return;editingId=r.id;fillForm(r);window.scrollTo({top:0,behavior:'smooth'});};$('deleteBtn').onclick=async()=>{if(!selectedId||!currentUser)return;if(!confirm('هل تريد حذف ملف هذا الزبون من قاعدة البيانات المشتركة لجميع العمال؟'))return;try{await remove(ref(db,`customers/${selectedId}`));$('detailCard').classList.add('hidden');selectedId=null;status('تم حذف الملف من قاعدة البيانات المشتركة.');}catch(err){alert('تعذر حذف الملف: '+(err?.message||err));}};
+$('accountInfo').textContent='الدخول التلقائي — بيانات مشتركة بين العمال';
+onAuthStateChanged(auth,async user=>{if(!user){currentUser=null;if(unsubscribeRecords){unsubscribeRecords();unsubscribeRecords=null;}records=[];render();if(!starting){starting=true;status('جارٍ الدخول التلقائي…');try{await signInAnonymously(auth);}catch(err){status('تعذر الدخول التلقائي. تحقق من تفعيل تسجيل الدخول المجهول في Firebase Authentication والاتصال بالإنترنت.');}finally{starting=false;}}return;}currentUser=user;if(unsubscribeRecords){unsubscribeRecords();unsubscribeRecords=null;}status('تم الدخول تلقائيًا. جارٍ تحميل ملفات الزبائن…');unsubscribeRecords=onValue(ref(db,'customers'),snap=>{const value=snap.val()||{};records=Object.entries(value).map(([id,r])=>({...r,id}));render();status('متصل بالسحابة. تتحدث القائمة تلقائيًا على الأجهزة التي تفتح التطبيق.');},err=>status('تعذر قراءة قاعدة البيانات. تحقق من قواعد الأمان في Firebase.'));});
