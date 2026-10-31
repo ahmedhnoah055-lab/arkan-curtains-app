@@ -1,0 +1,10 @@
+{
+  "name": "ستائر أركان الطليعة - المقاسات",
+  "short_name": "مقاسات أركان",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f7f4fa",
+  "theme_color": "#5a2d82",
+  "lang": "ar",
+  "dir": "rtl"
+}
